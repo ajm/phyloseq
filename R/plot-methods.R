@@ -1552,6 +1552,8 @@ tree.layout <- function(
 
   df$dir <- 'none'
 
+    xmax = max(df$x) * 1.05
+
   # We have a data frame with each node positioned.
   # Now we go through and make two line segments for each node (for a 'square corner' type tree plot).
   line.df <- data.frame()
@@ -1571,7 +1573,8 @@ tree.layout <- function(
                                xend=p.row$x,
                                label=row$label,   
                                dir='up',
-                               branch.length=row$branch.length
+                               branch.length=row$branch.length,
+                               linetype="solid"
                                )
       vert.line <- data.frame(
                                node=row$node,
@@ -1581,9 +1584,25 @@ tree.layout <- function(
                                xend=p.row$x,
                                label=row$label,
                                dir='across',
-                               branch.length=row$branch.length
+                               branch.length=row$branch.length,
+                               linetype="solid"
       )
       line.df <- rbind(line.df, horiz.line, vert.line)
+
+      if(row$is.leaf) {
+        dash.line <- data.frame(
+                               node=row$node,
+                               y=row$y,
+                               yend=row$y,
+                               x=row$x,
+                               xend=xmax,
+                               label=row$label,
+                               dir='across',
+                               branch.length=0,
+                               linetype="dotted"
+                             )
+        line.df <- rbind(line.df, dash.line)
+      }
     } else {
       up.line <- data.frame(
                                node=row$node,
@@ -1653,8 +1672,10 @@ treeMapVar2Tips <- function(melted.tip, physeq, variate){
 #' @import ggplot2
 plot_tree_only <- function(tdf){
 	# build tree lines
-	p <- ggplot(subset(tdf, type == "line")) + geom_segment(aes(x=x, y=y, xend=xend, yend=yend))
-	# Return ggplot object
+	#p <- ggplot(subset(tdf, type == "line")) + geom_segment(aes(x=x, y=y, xend=xend, yend=yend, linetype=linetype))
+	p <- ggplot() + geom_segment(aes(x=x, y=y, xend=xend, yend=yend), data=subset(tdf, linetype == "solid"), color="black", size=0.75)
+    p <- p + geom_segment(aes(x=x, y=y, xend=xend, yend=yend), data=subset(tdf, linetype == "dotted"), linetype="dotted", color="darkgrey")
+    # Return ggplot object
 	return(p)
 }
 ################################################################################
@@ -1682,19 +1703,23 @@ plot_tree_sampledodge <- function(physeq, p, tdf, color, shape, size, min.abunda
 	# # Make the 0-values NA so they're not plotted. 
 	OTU 		<- as(otu_table(physeq), "matrix") # Coerce to matrix.
 	if(!taxa_are_rows(physeq)){OTU <- t(OTU)} # Enforce orientation.
-	OTU[OTU==0] <- NA
-	
+    #OTU[OTU==0] <- NA
+
 	# # Now add abundance table
 	speciesDF 	<- cbind(speciesDF, OTU)
 	
 	# # Now melt to just what you need for adding to plot
 	melted.tip <- melt.data.frame(speciesDF, id.vars=c("x", "y", "taxa_names"))
-	
+
+
+    #print(head(melted.tip, n=10))
+
+
 	# Determine the horizontal adjustment index for each point
 	h.adj <- aaply(OTU, 1, function(j){ 1:length(j) - cumsum(is.na(j)) - 1 })
-	# Add to melted data.frame (melted.tip) - uses melt.array
+    # Add to melted data.frame (melted.tip) - uses melt.array
 	melted.tip$h.adj.index <- melt(h.adj)$value
-	
+
 	# the amount to adjust the horizontal coordinate space
 	x.spacer.base    <- base.spacing * max(melted.tip$x)
 	melted.tip$x.spacer.base <- x.spacer.base
@@ -1705,6 +1730,9 @@ plot_tree_sampledodge <- function(physeq, p, tdf, color, shape, size, min.abunda
 	if( nrow(melted.tip)==0L ){
 		stop("The number of rows of tip data.frame has dropped to 0 after rm NA values")		
 	}
+
+    melted.tip$x <- max(melted.tip$x) * 1.05
+    #print(head(melted.tip))
 
 	# Build the tip-label portion of the melted.tip data.frame, if needed.
 	if( !is.null(label.tips) ){
@@ -1750,7 +1778,7 @@ plot_tree_sampledodge <- function(physeq, p, tdf, color, shape, size, min.abunda
 	tip.map <- aes_string(x="x + x.adj + x.spacer.base", y="y", color=color, fill=color, shape=shape, size=size)
 	
 	# Add the new point layer.
-	p <- p + geom_point(tip.map, data=melted.tip, na.rm=TRUE)
+	#p <- p + geom_point(tip.map, data=melted.tip, na.rm=TRUE)
 
 	# Optionally-add abundance value label to each point.
 	# This size needs to match point size.
@@ -1794,7 +1822,17 @@ plot_tree_sampledodge <- function(physeq, p, tdf, color, shape, size, min.abunda
 	if( identical(size, "value") ){
 		p <- update_labels(p, list(size = "Abundance"))
 	}
-			
+
+    #write.table(melted.tip, file="tmp.df")
+
+    p <- p + geom_tile(aes(x=x + x.adj + x.spacer.base, y=y, fill=value), data=melted.tip, colour="grey") 
+    p <- p + scale_fill_gradient(trans="log", low="white", high="steelblue", na.value="white") #, guide="legend", name="Abundance") #breaks = c(10, 100, 1000))
+    p <- p + theme(legend.position="none")
+
+    sample.labels <- melted.tip[,c('x','x.adj','x.spacer.base','variable')]
+    sample.labels <- sample.labels[!duplicated(sample.labels),]
+    p <- p + geom_text(aes(x=x + x.adj + x.spacer.base, y=0, label=variable), data=sample.labels, size=I(text.size), angle=271, hjust=0)
+
 	return(p)		
 }
 ################################################################################
@@ -2203,8 +2241,11 @@ plot_tree <- function(physeq, method="sampledodge", nodelabf=NULL,
 	# Helps to manually ensure that graphic elements aren't clipped,
 	# especially when there are long tip labels.
 	if( method == "sampledodge" ){
-		min.x <- min(tdf$x, p$layers[[2]]$data$x, na.rm=TRUE)
-		max.x <- max(tdf$x, p$layers[[2]]$data$x, na.rm=TRUE)
+		min.x <- min(tdf$x, p$layers[[3]]$data$x, na.rm=TRUE)
+		max.x <- max(tdf$x, p$layers[[3]]$data$x, na.rm=TRUE)
+
+        min.y <- min(tdf$y, p$layers[[5]]$data$y, na.rm=TRUE)
+        max.y <- max(tdf$y, p$layers[[5]]$data$y, na.rm=TRUE)
 	} else {
 		min.x <- min(tdf$x, na.rm=TRUE)
 		max.x <- max(tdf$x, na.rm=TRUE)
@@ -2212,8 +2253,10 @@ plot_tree <- function(physeq, method="sampledodge", nodelabf=NULL,
 	if (plot.margin > 0) {
 		max.x <- max.x * (1.0 + plot.margin)
 	} 
-	p <- p + scale_x_continuous(limits=c(min.x, max.x))	
 	
+    p <- p + scale_x_continuous(limits=c(min.x, max.x))
+	p <- p + scale_y_continuous(limits=c(-10, max.y + 1))
+
 	# Themeing section.
 	#
 	# Theme-ing: Blank theming 
